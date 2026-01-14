@@ -8,6 +8,13 @@
 - (任意) `make` が使える場合は `make up` などのショートカットが利用できます
 
 ## 使い方
+0. 準備
+   ```sh
+    docker run --rm -it \
+      -v "$PWD:/work" -w /work \
+      golang:1.21 \
+      sh -c "go mod tidy"
+   ```
 1. リポジトリ直下で起動  
    ```bash
    docker compose up --build

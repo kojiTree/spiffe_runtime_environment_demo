@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   spire-server:
     image: ghcr.io/spiffe/spire-server:1.9.5
@@ -17,7 +15,9 @@ services:
     restart: unless-stopped
 
   spire-bootstrap:
-    image: ghcr.io/spiffe/spire-server:1.9.5
+    build:
+      context: .
+      dockerfile: ./spire/images/spire-server-with-sh.Dockerfile
     container_name: spire-bootstrap
     depends_on:
       spire-server:
@@ -31,7 +31,9 @@ services:
     entrypoint: ["/bin/sh", "/opt/spire/scripts/bootstrap.sh"]
 
   spire-agent:
-    image: ghcr.io/spiffe/spire-agent:1.9.5
+    build:
+      context: .
+      dockerfile: ./spire/images/spire-agent-with-sh.Dockerfile
     container_name: spire-agent
     depends_on:
       spire-server:
@@ -45,27 +47,13 @@ services:
       - ./spire/bootstrap:/run/spire/bootstrap
       - spire-agent-sockets:/run/spire/agent-sockets
       - spire-agent-data:/opt/spire/data
-    command: >
-      /bin/sh -c "
-        while [ ! -f /run/spire/bootstrap/agent-token ]; do
-          echo 'waiting for join token';
-          sleep 2;
-        done;
-        TOKEN=$(cat /run/spire/bootstrap/agent-token);
-        /opt/spire/bin/spire-agent run \
-          -config /opt/spire/conf/agent/agent.conf \
-          -join_token ${TOKEN} &
-        AGENT_PID=$!;
-        until [ -S /run/spire/agent-sockets/agent.sock ]; do
-          echo 'waiting for workload API socket';
-          sleep 1;
-        done;
-        chmod 0777 /run/spire/agent-sockets/agent.sock;
-        wait ${AGENT_PID}"
     restart: unless-stopped
 
   demo-server:
-    build: ./demo/server
+    pid: "service:spire-agent"
+    build:
+      context: .
+      dockerfile: ./demo/server/Dockerfile
     container_name: demo-server
     depends_on:
       spire-agent:
@@ -80,7 +68,10 @@ services:
     restart: unless-stopped
 
   demo-client:
-    build: ./demo/client
+    pid: "service:spire-agent"
+    build:
+      context: .
+      dockerfile: ./demo/client/Dockerfile
     container_name: demo-client
     depends_on:
       demo-server:

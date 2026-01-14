@@ -9,7 +9,6 @@ import (
 
 	"github.com/spiffe/go-spiffe/v2/spiffetls"
 	"github.com/spiffe/go-spiffe/v2/spiffetls/tlsconfig"
-	"github.com/spiffe/go-spiffe/v2/svid/x509svid"
 	"github.com/spiffe/go-spiffe/v2/workloadapi"
 )
 
@@ -26,8 +25,12 @@ func main() {
 	}
 	log.Printf("Server SVID: %s", svid.ID)
 
-	listener, err := spiffetls.Listen("tcp", listenAddr,
-		spiffetls.MTLSServerWithSource(source, tlsconfig.AuthorizeAny()))
+	listener, err := spiffetls.ListenWithMode(
+	    ctx,
+	    "tcp",
+	    listenAddr,
+	    spiffetls.MTLSServerWithSource(tlsconfig.AuthorizeAny(), source),
+	)
 	if err != nil {
 		log.Fatalf("failed to start mTLS listener: %v", err)
 	}
@@ -37,12 +40,12 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			clientID := "unknown"
-			if peer := r.TLS.PeerCertificates; len(peer) > 0 {
-				if peerSVID, err := x509svid.Parse(peer[0]); err == nil {
-					clientID = peerSVID.ID.String()
-				} else {
-					log.Printf("could not parse peer SVID: %v", err)
-				}
+			if r.TLS != nil {
+			    if id, err := spiffetls.PeerIDFromConnectionState(*r.TLS); err == nil {
+			        clientID = id.String()
+			    } else {
+			        log.Printf("could not get peer SPIFFE ID: %v", err)
+			    }
 			}
 			log.Printf("Client SPIFFE ID: %s", clientID)
 			w.WriteHeader(http.StatusOK)
