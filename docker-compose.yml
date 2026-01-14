@@ -1,0 +1,100 @@
+version: "3.9"
+
+services:
+  spire-server:
+    image: ghcr.io/spiffe/spire-server:1.9.5
+    container_name: spire-server
+    command: ["/opt/spire/bin/spire-server", "run", "-config", "/opt/spire/conf/server/server.conf"]
+    volumes:
+      - ./spire/server:/opt/spire/conf/server
+      - spire-server-data:/opt/spire/data
+      - spire-server-socket:/run/spire/server
+    healthcheck:
+      test: [ "CMD", "/opt/spire/bin/spire-server", "healthcheck", "-socketPath", "/run/spire/server/api.sock" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  spire-bootstrap:
+    image: ghcr.io/spiffe/spire-server:1.9.5
+    container_name: spire-bootstrap
+    depends_on:
+      spire-server:
+        condition: service_healthy
+    volumes:
+      - ./spire/scripts:/opt/spire/scripts
+      - ./spire/server:/opt/spire/conf/server
+      - ./spire/bootstrap:/run/spire/bootstrap
+      - spire-server-socket:/run/spire/server
+      - spire-server-data:/opt/spire/data
+    entrypoint: ["/bin/sh", "/opt/spire/scripts/bootstrap.sh"]
+
+  spire-agent:
+    image: ghcr.io/spiffe/spire-agent:1.9.5
+    container_name: spire-agent
+    depends_on:
+      spire-server:
+        condition: service_healthy
+      spire-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      - SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/agent-sockets/agent.sock
+    volumes:
+      - ./spire/agent:/opt/spire/conf/agent
+      - ./spire/bootstrap:/run/spire/bootstrap
+      - spire-agent-sockets:/run/spire/agent-sockets
+      - spire-agent-data:/opt/spire/data
+    command: >
+      /bin/sh -c "
+        while [ ! -f /run/spire/bootstrap/agent-token ]; do
+          echo 'waiting for join token';
+          sleep 2;
+        done;
+        TOKEN=$(cat /run/spire/bootstrap/agent-token);
+        /opt/spire/bin/spire-agent run \
+          -config /opt/spire/conf/agent/agent.conf \
+          -join_token ${TOKEN} &
+        AGENT_PID=$!;
+        until [ -S /run/spire/agent-sockets/agent.sock ]; do
+          echo 'waiting for workload API socket';
+          sleep 1;
+        done;
+        chmod 0777 /run/spire/agent-sockets/agent.sock;
+        wait ${AGENT_PID}"
+    restart: unless-stopped
+
+  demo-server:
+    build: ./demo/server
+    container_name: demo-server
+    depends_on:
+      spire-agent:
+        condition: service_started
+    environment:
+      - SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/agent-sockets/agent.sock
+    volumes:
+      - spire-agent-sockets:/run/spire/agent-sockets
+    ports:
+      - "8443:8443"
+    user: "1001"
+    restart: unless-stopped
+
+  demo-client:
+    build: ./demo/client
+    container_name: demo-client
+    depends_on:
+      demo-server:
+        condition: service_started
+    environment:
+      - SPIFFE_ENDPOINT_SOCKET=unix:///run/spire/agent-sockets/agent.sock
+      - SERVER_ADDR=demo-server:8443
+    volumes:
+      - spire-agent-sockets:/run/spire/agent-sockets
+    user: "1002"
+    restart: "no"
+
+volumes:
+  spire-server-data:
+  spire-server-socket:
+  spire-agent-sockets:
+  spire-agent-data:
